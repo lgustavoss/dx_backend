@@ -36,5 +36,6 @@ urlpatterns = [
     path('me/', UserProfileView.as_view(), name='user-profile'),
     #chamando a rota de urls de usuarios
     path('usuario/', include('usuario.urls')), 
+    #chamando a rota de urls de clientes
+    path('cliente/', include('cliente.urls')),
 ]
-
