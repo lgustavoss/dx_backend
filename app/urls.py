@@ -38,4 +38,6 @@ urlpatterns = [
     path('usuario/', include('usuario.urls')), 
     #chamando a rota de urls de clientes
     path('cliente/', include('cliente.urls')),
+    #chamando a rota de urls de empresa
+    path('empresa/', include('empresa.urls')),
 ]
