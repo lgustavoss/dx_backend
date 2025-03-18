@@ -6,7 +6,9 @@ from rest_framework.viewsets import ViewSet
 from django.utils import timezone
 from .models import Cliente, Estado, Cidade
 from .serializers import ClienteSerializer, EstadoSerializer, CidadeSerializer
-import requests
+from .services.cnpj_service import consultar_cnpj
+from .services.cep_service import consultar_cep
+from .services.ibge_service import consultar_estado_por_id, consultar_municipio_por_id
 
 class EstadoViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -63,27 +65,10 @@ class ConsultaViewSet(ViewSet):
         Consulta os dados de um CNPJ usando API externa
         """
         try:
-            # Remover caracteres especiais
-            cnpj_numerico = ''.join(filter(str.isdigit, cnpj))
-            
-            response = requests.get(f'https://www.receitaws.com.br/v1/cnpj/{cnpj_numerico}')
-            data = response.json()
-            
-            if 'status' in data and data['status'] == 'ERROR':
-                return Response({"error": data.get('message', 'Erro na consulta do CNPJ')}, 
-                            status=status.HTTP_400_BAD_REQUEST)
-                
-            # Mapear os dados recebidos para o formato esperado pelo nosso modelo
-            empresa_dados = {
-                'cnpj': data.get('cnpj', ''),
-                'razao_social': data.get('nome', ''),
-                'nome_fantasia': data.get('fantasia', ''),
-                'endereco': f"{data.get('logradouro', '')}, {data.get('numero', '')}, {data.get('complemento', '')}".strip(','),
-                'cep': data.get('cep', ''),
-            }
-            
+            empresa_dados = consultar_cnpj(cnpj)
             return Response(empresa_dados)
-            
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": f"Erro ao consultar CNPJ: {str(e)}"}, 
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -93,24 +78,10 @@ class ConsultaViewSet(ViewSet):
         Consulta os dados de um CEP usando ViaCEP
         """
         try:
-            # Remover caracteres especiais
-            cep_numerico = ''.join(filter(str.isdigit, cep))
-            
-            response = requests.get(f'https://viacep.com.br/ws/{cep_numerico}/json/')
-            data = response.json()
-            
-            if 'erro' in data:
-                return Response({"error": "CEP não encontrado"}, status=status.HTTP_404_NOT_FOUND)
-            
-            endereco_dados = {
-                'endereco': data.get('logradouro', ''),
-                'bairro': data.get('bairro', ''),
-                'cidade': data.get('localidade', ''),
-                'estado': data.get('uf', '')
-            }
-            
+            endereco_dados = consultar_cep(cep)
             return Response(endereco_dados)
-            
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": f"Erro ao consultar CEP: {str(e)}"}, 
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -171,19 +142,10 @@ class ConsultaViewSet(ViewSet):
         Consulta detalhes de um estado usando seu ID do IBGE
         """
         try:
-            url = f'https://servicodados.ibge.gov.br/api/v1/localidades/estados/{id}'
-            response = requests.get(url)
-            
-            if response.status_code == 404:
-                return Response({"error": "Estado não encontrado"}, status=status.HTTP_404_NOT_FOUND)
-                
-            data = response.json()
-            return Response({
-                "id": data["id"],
-                "sigla": data["sigla"],
-                "nome": data["nome"]
-            })
-            
+            estado_data = consultar_estado_por_id(id)
+            return Response(estado_data)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": f"Erro ao consultar estado: {str(e)}"}, 
                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -193,23 +155,34 @@ class ConsultaViewSet(ViewSet):
         Consulta detalhes de um município usando seu ID do IBGE
         """
         try:
-            url = f'https://servicodados.ibge.gov.br/api/v1/localidades/municipios/{id}'
-            response = requests.get(url)
-            
-            if response.status_code == 404:
-                return Response({"error": "Município não encontrado"}, status=status.HTTP_404_NOT_FOUND)
-                
-            data = response.json()
-            return Response({
-                "id": data["id"],
-                "nome": data["nome"],
-                "estado": {
-                    "id": data["microrregiao"]["mesorregiao"]["UF"]["id"],
-                    "sigla": data["microrregiao"]["mesorregiao"]["UF"]["sigla"],
-                    "nome": data["microrregiao"]["mesorregiao"]["UF"]["nome"]
-                }
-            })
-            
+            municipio_data = consultar_municipio_por_id(id)
+            return Response(municipio_data)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": f"Erro ao consultar município: {str(e)}"}, 
                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import ClienteViewSet, EstadoViewSet, CidadeViewSet, ConsultaViewSet
+
+router = DefaultRouter()
+router.register(r'clientes', ClienteViewSet)
+router.register(r'estados', EstadoViewSet)
+router.register(r'cidades', CidadeViewSet)
+router.register(r'consulta', ConsultaViewSet, basename='consulta')
+
+urlpatterns = [
+    path('', include(router.urls)),
+    #  Listar municipios por UF
+    path('consulta/municipios/<str:uf>/', ConsultaViewSet.as_view({'get': 'municipios_por_uf'})),
+    #  Consultar dados do CNPJ
+    path('consulta/cnpj/<str:cnpj>/', ConsultaViewSet.as_view({'get': 'cnpj_por_numero'})),
+    # Consultar dados por CEP
+    path('consulta/cep/<str:cep>/', ConsultaViewSet.as_view({'get': 'cep_por_numero'})),
+    # Listar estados por id
+    path('consulta/estado/<int:id>/', ConsultaViewSet.as_view({'get': 'estado_por_id'})),
+    # Listar municipios por id
+    path('consulta/municipio/<int:id>/', ConsultaViewSet.as_view({'get': 'municipio_por_id'})),
+]

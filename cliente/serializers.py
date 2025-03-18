@@ -1,7 +1,9 @@
 from rest_framework import serializers
 from .models import Cliente, Estado, Cidade
-from validate_docbr import CNPJ, CPF
-import requests
+from .validators.cnpj_validator import validar_cnpj
+from .validators.cpf_validator import validar_cpf
+from .services.cnpj_service import consultar_cnpj
+from .services.ibge_service import consultar_estado_por_id, consultar_municipio_por_id
 
 class EstadoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -29,28 +31,10 @@ class ClienteSerializer(serializers.ModelSerializer):
         }
     
     def validate_cnpj(self, value):
-        # Remover caracteres não numéricos
-        cnpj_numerico = ''.join(filter(str.isdigit, value))
-        
-        # Validar CNPJ
-        validador = CNPJ()
-        if not validador.validate(cnpj_numerico):
-            raise serializers.ValidationError("CNPJ inválido.")
-        
-        # Formatar CNPJ
-        return validador.mask(cnpj_numerico)
+        return validar_cnpj(value)
     
     def validate_responsavel_cpf(self, value):
-        # Remover caracteres não numéricos
-        cpf_numerico = ''.join(filter(str.isdigit, value))
-        
-        # Validar CPF
-        validador = CPF()
-        if not validador.validate(cpf_numerico):
-            raise serializers.ValidationError("CPF inválido.")
-        
-        # Formatar CPF
-        return validador.mask(cpf_numerico)
+        return validar_cpf(value)
         
     def validate(self, data):
         # Mapear campos antigos para novos
@@ -64,11 +48,7 @@ class ClienteSerializer(serializers.ModelSerializer):
         try:
             estado_id = data.get('estado_id')
             if estado_id:
-                url = f'https://servicodados.ibge.gov.br/api/v1/localidades/estados/{estado_id}'
-                response = requests.get(url)
-                if response.status_code != 200:
-                    raise serializers.ValidationError({"estado_id": "Estado não encontrado"})
-                estado_data = response.json()
+                estado_data = consultar_estado_por_id(estado_id)
                 data['estado_sigla'] = estado_data["sigla"]
         except Exception as e:
             raise serializers.ValidationError({"estado_id": f"Erro ao validar estado: {str(e)}"})
@@ -77,11 +57,7 @@ class ClienteSerializer(serializers.ModelSerializer):
         try:
             cidade_id = data.get('cidade_id')
             if cidade_id:
-                url = f'https://servicodados.ibge.gov.br/api/v1/localidades/municipios/{cidade_id}'
-                response = requests.get(url)
-                if response.status_code != 200:
-                    raise serializers.ValidationError({"cidade_id": "Município não encontrado"})
-                municipio_data = response.json()
+                municipio_data = consultar_municipio_por_id(cidade_id)
                 data['cidade_nome'] = municipio_data["nome"]
         except Exception as e:
             raise serializers.ValidationError({"cidade_id": f"Erro ao validar município: {str(e)}"})
